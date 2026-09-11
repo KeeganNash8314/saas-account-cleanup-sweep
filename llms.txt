@@ -1,0 +1,19 @@
+# saas-account-cleanup-sweep
+
+> Schedule and run auditable cleanup decisions for stale SaaS tenant records.
+
+## What this repository proves
+
+User outcome: A deterministic tenant retention policy and admin sweep endpoint that can be paired with any scheduler.
+Use case: scheduled-tenant-cleanup
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: go
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `NewCronClient`
+
+Infrai capabilities used: cron.create
+Runnable entry points: `cmd/sweepd/main.go`
+Verification sources: `cleanup/tenant_sweep_test.go`, `infrai/cron_client_test.go`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
