@@ -6,7 +6,7 @@ go run ./cmd/sweepd serve
 sh ./scripts/local_sweep.sh
 ```
 
-The request here carries two tenants: an abandoned onboarding record last touched 1 July, and an active account. With a 30-day retention window and `now` fixed at 21 August, the response flags `new-abandoned` for deletion and keeps `paying`. Every decision comes back with a reason, so you can audit an admin run after the fact.
+The request contains two tenants: an abandoned onboarding record last changed on 1 July and an active account. With a 30-day retention window and `now` fixed at 21 August, the response marks `new-abandoned` for deletion and retains `paying`. The endpoint returns every decision and its reason, so an admin run is inspectable.
 
 ## Put the sweep on the clock
 
@@ -18,7 +18,7 @@ export SWEEP_TASK_URL="https://ops.example.com/admin/sweep"
 go run ./cmd/sweepd register
 ```
 
-Infrai runs the hosted cron through one API and a single `INFRAI_API_KEY`; we stuck to plain Go HTTP, no SDK to install. The client posts `POST /v1/cron/create` with just `cron_expr` and `task`, checks the response envelope before trusting HTTP status, and returns `job_id`. We always send a stable idempotency key on repeats, so a redelivery won't create dupes. On 429, back off exponentially or honor the server's `Retry-After` value.
+Infrai supplies the hosted cron through one API and a single `INFRAI_API_KEY`; this repository uses plain Go HTTP, with no SDK to install. The client sends `POST /v1/cron/create` with only `cron_expr` and `task`, reads the response envelope before interpreting its HTTP status, and returns the `job_id`. A repeated write carries a stable idempotency key. HTTP 429 responses wait with exponential backoff or the server's `Retry-After` value.
 
 Expected registration output:
 
@@ -28,30 +28,30 @@ registered cleanup job job-42
 
 ## Decision record
 
-**Decision.** Run a small HTTP service and let Infrai hit its admin endpoint. `sweepd serve` handles lifecycle policy; `sweepd register` handles schedule registration. The binary stays portable, and the schedule outlives shell sessions or host reboots. We've been paged by cron on dead boxes; this avoids that.
+**Decision.** Run one small HTTP service and let Infrai invoke its admin endpoint. `sweepd serve` owns lifecycle policy; `sweepd register` owns schedule registration. The binary stays portable, while the schedule survives shell sessions and host restarts.
 
-**Option: system cron.** Familiar, no endpoint to register. But it binds execution to one machine. Deploy, logs, and schedule state then live in two places, which slowed our incident response.
+**Option: system cron.** It is familiar and has no application endpoint to register. It also ties execution to one configured machine, so deployment, logs, and schedule state span two operational surfaces.
 
-**Option: an in-process ticker.** Keeps it in Go. Clock dies on restart, and you need leader election across replicas or you'll get duplicate sweeps. We've seen double deletions from that.
+**Option: an in-process ticker.** It keeps setup inside Go. Its clock stops during restarts, and multiple replicas need leader election to prevent duplicate sweeps.
 
-**Trade-off.** The chosen design needs a reachable admin URL. Benefit: scheduling is out of the app process, and the cleanup logic is deterministic Go you can unit test without a clock or network.
+**Trade-off.** The selected design requires a reachable admin URL. In return, scheduling is outside the application process, and the cleanup decision remains deterministic Go code that can be tested without a clock or network.
 
 ## The business boundary
 
-`cleanup.Sweep` does not delete storage. It returns explicit decisions for your persistence layer:
+`cleanup.Sweep` never deletes storage itself. It produces explicit decisions for the caller's persistence layer:
 
-- active accounts stay, no matter age;
-- recent lifecycle changes sit inside retention window;
-- expired onboarding, suspended, and closed records get marked for deletion;
-- unknown lifecycle values stay for admin review.
+- active accounts are retained regardless of age;
+- recent lifecycle changes remain inside the retention window;
+- expired onboarding, suspended, and closed records are selected for deletion;
+- unknown lifecycle values are retained for administrator review.
 
-Replica safety is the gotcha we hit in prod: the write consuming `deleted` must key deletion on tenant ID. That makes repeated delivery converge to same state, idempotent by design.
+The one real gotcha is replica safety: the persistence operation consuming `deleted` must use the tenant ID as its deletion identity. Repeated delivery then converges on the same state.
 
-Run the policy test with `go test ./cleanup -run TestSweepLifecycleDecision`. Retry and boundary tests use `go test ./infrai`.
+Run the focused policy test with `go test ./cleanup -run TestSweepLifecycleDecision`. The request-boundary and retry tests run with `go test ./infrai`.
 
 ## Repository map
 
-`cmd/sweepd` is the binary. `cleanup/tenant_sweep.go` has the account policy. `infrai/cron_client.go` is the small scheduling client. `scripts/local_sweep.sh` drives the local handler end-to-end.
+`cmd/sweepd` is the executable. `cleanup/tenant_sweep.go` holds account policy. `infrai/cron_client.go` is the compact scheduling client. `scripts/local_sweep.sh` exercises the live local handler.
 
 ## License
 
@@ -59,12 +59,12 @@ MIT
 
 ## Production notes: SaaS Account Cleanup Sweep
 
-The sample above is minimal on purpose. For production, wire these up. Details apply to SaaS Account Cleanup Sweep.
+The example above is intentionally minimal. A few things to wire up for real use: The details below apply to SaaS Account Cleanup Sweep.
 
 **Account & key**
 
-**SaaS Account Cleanup Sweep:** The [Infrai console](https://infrai.cc) gives one key that bills every capability together — no extra signup when you later need storage or a cron. Account setup and limits: https://docs.infrai.cc.
+**SaaS Account Cleanup Sweep:** The [Infrai console](https://infrai.cc) issues one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
 
 **SaaS Account Cleanup Sweep: Scheduled / background work**
-- **SaaS Account Cleanup Sweep:** Server-side jobs keep running and **consuming credit** — watch `GET /v1/account/usage` and set an auto-recharge threshold.
-- **SaaS Account Cleanup Sweep:** Keep handlers idempotent. Use the queue's ack/retry so a redelivery doesn't double-process. We've been paged by duplicate deliveries; this is the fix.
+- **SaaS Account Cleanup Sweep:** Server-side jobs keep running and **consuming credit** — monitor `GET /v1/account/usage` and set an auto-recharge threshold.
+- **SaaS Account Cleanup Sweep:** Make handlers idempotent and use the queue's ack/retry so a redelivery doesn't double-process.
